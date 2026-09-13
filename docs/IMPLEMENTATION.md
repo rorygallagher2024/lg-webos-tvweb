@@ -33,7 +33,7 @@ here is needed to use the project - see the [README](../README.md) for that.
                                           ▼
                   ┌─────────────────────────────────────────┐
                   │              Home Assistant             │
-                  │       (Up to 61 Auto-Discovered)        │
+                  │      (Auto-Discovered Entities)         │
                   └─────────────────────────────────────────┘
 ```
 
@@ -310,3 +310,22 @@ holds until someone notices.
 `scripts/check-entities.py` resolves every entity's `value_json` paths against a
 live `/api/stats`. A renamed field otherwise leaves an entity at `unknown` with
 no error anywhere.
+
+---
+
+## The checks
+
+`scripts/` holds four static checks. Three need nothing but the repository and
+run in CI; `check-entities.py` needs a live `/api/stats`, so it is run by hand
+against the set.
+
+| Check | What it catches |
+| :--- | :--- |
+| `check-es5.py` | An ES6 construct in `tvweb.js`. Node 0.12 treats one as a parse error, so the server never starts and logs nothing. |
+| `check-ui-ids.py` | An id the dashboard reaches for that no element defines. |
+| `check-screensavers.py` | QML newer than the `import QtQuick` line it declares. |
+| `check-entities.py` | An entity template naming a field the telemetry no longer has. |
+
+`check-es5.py` blanks strings, comments and regex literals before scanning, and
+checks syntax only: an ES6 library call parses and fails at the call, which the
+log shows, while a parse error leaves no process to log anything.

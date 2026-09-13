@@ -1,0 +1,31 @@
+# The checks that need nothing but the repository.
+#
+# scripts/check-entities.py is deliberately absent: it resolves every entity's
+# template against a live /api/stats, so it needs a TV on the network or a
+# recorded payload. Run it by hand against the set before a release.
+name: checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The TV runs node 0.12, where an ES6 construct is a parse error rather
+      # than a degraded feature - the server simply never starts.
+      - name: ES5 only in the on-TV server
+        run: ./scripts/check-es5.py
+
+      - name: tvweb.js parses
+        run: node --check server/tvweb.js
+
+      - name: dashboard reaches for no missing element
+        run: ./scripts/check-ui-ids.py
+
+      - name: screen saver QML matches its declared QtQuick version
+        run: ./scripts/check-screensavers.py

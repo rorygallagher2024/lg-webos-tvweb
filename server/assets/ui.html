@@ -1461,7 +1461,7 @@ async function tick() {
 
     if (d.inputs && !q('inputs').dataset.built) {
       q('inputs').innerHTML = Object.keys(d.inputs).map(k =>
-        `<button id="in_${k}" onclick="c('input','${k}')">${d.inputs[k]}</button>`).join('') +
+        `<button id="in_${k}" onclick="c('input','${k}')">${esc(d.inputs[k])}</button>`).join('') +
         `<button id="in_livetv" onclick="c('input','livetv')">Live TV</button>`;
       q('inputs').dataset.built = '1';
     }
@@ -1943,7 +1943,7 @@ async function loadProcesses() {
     q('proc-cur').textContent =
       `${d.count} running · ${d.totalMb.toLocaleString()} MB resident`;
     q('proc-list').innerHTML = d.top.map(p =>
-      `<div class="proc"><div class="p-name">${p.name}</div>` +
+      `<div class="proc"><div class="p-name">${esc(p.name)}</div>` +
       `<div class="p-mb">${p.mb.toFixed(1)} MB</div></div>`).join('');
   } catch (e) {
     q('proc-list').innerHTML =
@@ -1967,7 +1967,7 @@ async function loadCpu() {
     q('cpu-cur').textContent = `${d.busy.toFixed(1)}% busy · ${d.active} active`;
     q('cpu-list').innerHTML = d.top.length
       ? d.top.map(p =>
-          `<div class="proc"><div class="p-name">${p.name}</div>` +
+          `<div class="proc"><div class="p-name">${esc(p.name)}</div>` +
           `<div class="p-mb">${p.pct.toFixed(1)}%</div></div>`).join('')
       : '<div class="sub">Nothing used any CPU over the sample.</div>';
   } catch (e) {

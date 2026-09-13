@@ -4,8 +4,8 @@
  *
  * IMPORTANT: the TV ships node v0.12.2 (2015). This file must stay ES5 -
  * no arrow functions, no const/let, no template literals, no async/await,
- * no Object.assign. The browser-side code further down is NOT restricted,
- * because it runs in your phone/laptop browser, not on the TV.
+ * no Object.assign; scripts/check-es5.py enforces it. The dashboard in
+ * assets/ui.html is NOT restricted: it runs in a browser, not on the TV.
  *
  * Run:  node tvweb.js
  */
@@ -3830,12 +3830,13 @@ var server = http.createServer(function (req, res) {
 
   if (pathname === '/api/control' && req.method === 'POST') {
     /*
-     * CSRF guard. Responses carry Access-Control-Allow-Origin:*, and a POST
-     * with a "simple" content type (text/plain, form-urlencoded) is sent by a
-     * browser WITHOUT a CORS preflight - so any web page the user visits could
-     * otherwise drive this TV. Requiring application/json forces a preflight,
-     * which this server never approves, and rejecting cross-site Origins
-     * closes the gap for anything that does slip through.
+     * CSRF guard. No CORS grant is sent, so another site cannot read the
+     * reply - but a POST with a "simple" content type (text/plain,
+     * form-urlencoded) is still *delivered* without a preflight, and the TV
+     * has acted on it by the time the response is discarded. Requiring
+     * application/json forces a preflight, which this server never approves,
+     * and rejecting cross-site Origins closes the gap for anything that does
+     * slip through.
      */
     var ctype = String(req.headers['content-type'] || '').toLowerCase();
     if (ctype.indexOf('application/json') !== 0) {
@@ -3951,6 +3952,16 @@ MiniMQTT.prototype.connect = function() {
   var self = this;
   if (this.client) return;
   clearTimeout(this.retryTimer);
+
+  /*
+   * Start each connection on an empty buffer. A drop mid-packet - a broker
+   * restart, a Wi-Fi blip - leaves a partial packet here, and the new
+   * connection's CONNACK would be appended to that fragment. The parser reads
+   * the remaining length from the fragment's bytes, waits for a packet that
+   * never completes, and the client stays unconnected: publish() then silently
+   * returns and the bridge goes quiet until the process restarts.
+   */
+  this.buffer = toBuffer([]);
 
   /*
    * Plain TCP by default, since that is what a typical home broker listens on.
