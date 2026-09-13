@@ -7,7 +7,7 @@
 # very command (its argv contains the path), so the shell kills itself before
 # starting anything. Inside a script, the shell's argv is just this file.
 #
-# Usage: tvwebctl {start|stop|restart|status|watch}
+# Usage: tvwebctl {start|stop|restart|status|watch|update|rollback}
 
 APP=/var/lib/tvweb/tvweb.js
 LOG=/var/lib/tvweb/tvweb.log
@@ -97,11 +97,37 @@ watch_loop() {
   done
 }
 
+# Check for a newer release and install it. The work happens in the server
+# itself - one implementation for the dashboard, Home Assistant and this - which
+# is also why this runs a second node process rather than reimplementing it here.
+# Exit 3 from --update means nothing newer was found, so there is nothing to
+# restart for.
+update_app() {
+  [ -x "$NODE" ] || { echo "node not found at $NODE"; exit 1; }
+  [ -f "$APP" ]  || { echo "not installed: $APP"; exit 1; }
+  case "$1" in
+    --check|check) "$NODE" "$APP" --check-update; exit $? ;;
+  esac
+  "$NODE" "$APP" --update
+  rc=$?
+  [ "$rc" = 3 ] && exit 0
+  [ "$rc" = 0 ] || exit "$rc"
+  stop_watch; stop_app; sleep 1; start_app; start_watch
+  sleep 4
+  "$SELF" status
+}
+
 case "$1" in
   start)   start_app; start_watch ;;
   stop)    stop_watch; stop_app ;;
   restart) stop_watch; stop_app; sleep 1; start_app; start_watch ;;
   watch)   watch_loop ;;
+  update)  update_app "$2" ;;
+  rollback)
+    "$NODE" "$APP" --rollback || exit $?
+    stop_watch; stop_app; sleep 1; start_app; start_watch
+    sleep 4
+    "$SELF" status ;;
   status)
     if [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
       echo "running (pid $(cat $PIDFILE))"
@@ -118,5 +144,5 @@ case "$1" in
       echo "watchdog not running"
     fi
     [ -s "$RESTARTS" ] && echo "last restart: $(tail -1 "$RESTARTS")" ;;
-  *) echo "usage: $0 {start|stop|restart|status|watch}"; exit 2 ;;
+  *) echo "usage: $0 {start|stop|restart|status|watch|update [--check]|rollback}"; exit 2 ;;
 esac

@@ -14,6 +14,11 @@ it before exposing it more widely.
 - **Turn the dashboard off if you do not use it.** `"web": { "enabled": false }`
   removes the HTTP endpoint altogether, which is stronger than gating it with a
   token. An MQTT-only install has no reason to expose one.
+- **The upgrade endpoint installs code.** `allowControl` gates it along with
+  everything else, so on a default install anyone who can reach the port can
+  move the set to the current release. It is a fixed repository over verified
+  TLS, so that is the whole of what they can do; `token` or
+  `"allowControl": false` closes it.
 - **Never port-forward this.** It is designed for a trusted LAN.
 - Bind to `127.0.0.1` instead of `0.0.0.0` if you only want the TV itself to
   reach it.

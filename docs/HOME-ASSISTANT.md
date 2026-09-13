@@ -6,7 +6,7 @@ Entity reference and example automations.
 
 ## Entities
 
-Once connected to your MQTT broker, Home Assistant automatically discovers **up to 69 native entities** under a single unified device:
+Once connected to your MQTT broker, Home Assistant automatically discovers **up to 70 native entities** under a single unified device:
 
 ### Controls & Switches
 | Domain | Entity ID | Name | Description |
@@ -99,6 +99,7 @@ of Unknowns and a cable error count of zero.
 | `sensor` | `sensor.lg_tv_flash_wear` | Flash Wear Level | JEDEC write-cycle consumption (`0–10%`) |
 | `sensor` | `sensor.lg_tv_uptime` | Uptime | TV uptime in seconds |
 | `sensor` | `sensor.lg_tv_tvweb_version` | Server Version | Version of this server, not TV firmware (diagnostic) |
+| `update` | `update.lg_tv_server_update` | Server Update | Latest release, its notes and an install button. Published only with `"update": { "check": true }` set &mdash; see [Updating](../README.md#updating) |
 
 ---
 

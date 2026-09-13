@@ -165,6 +165,40 @@ becomes the remote shell's own `argv`:
 `rsync` ships with the Homebrew Channel but is broken on-device: it cannot load
 `libcrypto.so.1.1`. Use `scp`, which works over the sftp subsystem.
 
+## Upgrading in place
+
+Four things decide how `tvwebctl update` works.
+
+**The HTTP client is probed, not assumed.** The stock `/usr/bin/curl` is 7.53.1
+against OpenSSL 1.0.2 and busybox `wget` is no better, so neither completes a
+handshake with current GitHub, and node 0.12's `https` has no CA bundle worth
+trusting. The client that gets through is one the owner installed, in a location
+nobody can predict, so each candidate is tried against the real release endpoint
+until one returns usable JSON. A client that does that has proved everything
+that matters. Certificate verification is never disabled: what comes back runs
+as root on the next restart.
+
+**The directory is updated in place, not swapped.** `/var/lib/tvweb` holds more
+than code — `config.json`, `adblock_hosts`, the staged screen saver the boot hook
+bind-mounts, `services_stopped` — and a wholesale swap has to carry every one of
+them across or silently lose it. Replacing only the files the release ships
+cannot lose state it never touches.
+
+**Every file is renamed into place, never written over.** Busybox ash reads a
+script as it executes, so overwriting `tvwebctl` corrupts the watchdog loop
+already running out of it. A rename leaves that process on the old inode.
+
+**The tarball is inflated by node, not by tar.** `zlib` is certainly present and
+busybox's gzip support is not, and an inflate failure is how a truncated download
+is caught — cheaper than trusting a content length. The unpacked `tvweb.js` then
+has to declare the version that was asked for before anything is replaced.
+
+The upgrade runs in the server itself, with `tvwebctl update` invoking
+`node tvweb.js --update` as a one-shot. One implementation serves the dashboard,
+Home Assistant and the shell, and the shell path still works with the dashboard
+switched off or the server not running. `--update` exits 3 when there is nothing
+newer, which `tvwebctl` reads as "no restart needed" rather than as a failure.
+
 ## Fonts
 
 The dashboard bundles [Outfit](https://github.com/Outfitio/Outfit-Fonts) and
