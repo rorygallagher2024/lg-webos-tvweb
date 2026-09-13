@@ -12,7 +12,7 @@ at "unknown", which nobody notices for weeks.
 This walks every discovery entity in tvweb.js, extracts the value_json paths
 its template references, and resolves each against a live /api/stats response.
 
-    ./scripts/check-entities.py [tv-ip] [--token TOKEN] [--stats FILE]
+    ./scripts/check-entities.py <tv-ip> [--token TOKEN] [--stats FILE]
 
 A set with `token` configured - which the README recommends - answers /api/
 with 401, so pass the same token here. TVWEB_TOKEN works too, and is the
@@ -42,7 +42,7 @@ def take(flag):
 
 stats_file = take('--stats')
 token = take('--token') or os.environ.get('TVWEB_TOKEN')
-tv = args[0] if args else '192.168.1.134'
+tv = args[0] if args else None
 src = (pathlib.Path(__file__).parent.parent / 'server' / 'tvweb.js').read_text(encoding='utf-8')
 
 if stats_file:
@@ -50,6 +50,8 @@ if stats_file:
         stats = json.loads(pathlib.Path(stats_file).read_text(encoding='utf-8'))
     except Exception as e:
         sys.exit(f'could not read {stats_file}: {e}')
+elif not tv:
+    sys.exit('usage: check-entities.py <tv-ip> [--token TOKEN] [--stats FILE]')
 else:
     url = f'http://{tv}:8080/api/stats'
     if token:

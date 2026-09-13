@@ -4095,7 +4095,18 @@ MiniMQTT.prototype._parse = function() {
       var tLen = (packetBody[0] << 8) | packetBody[1];
       var topic = packetBody.slice(2, 2 + tLen).toString('utf8');
       var pOffset = 2 + tLen;
-      if (qos > 0) pOffset += 2; // skip packet identifier
+      if (qos > 0) {
+        /*
+         * Subscriptions are made at QoS 0 and a broker may not deliver above
+         * the granted QoS, so this should never arrive. If one does, a QoS 1
+         * message left unacknowledged is redelivered on a timer for as long as
+         * the session lasts, so answer it rather than drop it silently.
+         */
+        if (qos === 1 && this.client) {
+          this.client.write(toBuffer([0x40, 0x02, packetBody[pOffset], packetBody[pOffset + 1]]));
+        }
+        pOffset += 2;   // past the packet identifier
+      }
       var payload = packetBody.slice(pOffset).toString('utf8');
       this.emit('message', topic, payload);
     }
@@ -5038,6 +5049,19 @@ function setupHomeAssistant() {
      */
     // Each of these has one field behind it, and is published only once this
     // set has reported that field - see hdmiSeen.
+    /*
+     * Entities this set cannot answer for.
+     *
+     * Publishing one anyway leaves Home Assistant with a sensor that reads
+     * "unknown" for the life of the install - or worse, a confident 0 that
+     * looks like a real measurement. A retained empty config removes one that
+     * a previous run published, so a set that loses a capability (or a config
+     * that renames the device) does not leave orphans behind holding their
+     * last value.
+     *
+     * Order matters only for the OLED rule last: its log line counts what it
+     * withheld, after the rules above have taken their own.
+     */
     var HDMI_DIAG_ONLY = {
       hdmi_link_mode: 'phy_mode', hdmi_chroma: 'chroma', hdmi_hdcp: 'hdcp',
       hdmi_cable_errors: 'phy_errors', hdmi_allm: 'allm', hdmi_vrr: 'vrr'
@@ -5056,211 +5080,100 @@ function setupHomeAssistant() {
     };
 
     /*
-     * Withhold remote battery entity if Magic Remote info is absent (e.g. set only uses IR).
+     * The component is part of the discovery topic, so the clear has to use
+     * the entity's own type: clearing homeassistant/sensor/... for something
+     * published as a switch removes nothing and leaves the switch stranded.
      */
-    if (!readRemoteInfo()) {
-      var keptRemote = [];
-      for (var ri = 0; ri < entities.length; ri++) {
-        if (entities[ri].id === 'remote_battery') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/remote_battery/config', '', true);
-        } else { keptRemote.push(entities[ri]); }
+    function withhold(matches) {
+      var kept = [], dropped = 0;
+      for (var w = 0; w < entities.length; w++) {
+        if (matches(entities[w])) {
+          mqttClient.publish(discPfx + '/' + entities[w].type + '/' + devId + '/' +
+                             entities[w].id + '/config', '', true);
+          dropped++;
+        } else {
+          kept.push(entities[w]);
+        }
       }
-      entities = keptRemote;
+      entities = kept;
+      return dropped;
     }
 
-    /*
-     * Withhold OLED cycle counters & failure alerts on older sets where pnwash files don't exist.
-     */
+    // Matcher for the common case: withhold these entities by id.
+    function byId() {
+      var set = {}, a;
+      for (a = 0; a < arguments.length; a++) set[arguments[a]] = 1;
+      return function (e) { return set[e.id] === 1; };
+    }
+
+    // Magic Remote battery, on a set that only ever sees an IR remote.
+    if (!readRemoteInfo()) withhold(byId('remote_battery'));
+
+    // OLED cycle counters and failure alerts, on older sets with no pnwash files.
     if (!fs.existsSync('/mnt/lg/cmn_data/pnwash/completedOffRsCount')) {
-      var keptCycles = [];
-      for (var ci = 0; ci < entities.length; ci++) {
-        if (entities[ci].id === 'oled_short_cycles' || entities[ci].id === 'oled_refresher_cycles' || entities[ci].id === 'oled_failure_alerts') {
-          mqttClient.publish(discPfx + '/' + entities[ci].type + '/' + devId + '/' + entities[ci].id + '/config', '', true);
-        } else { keptCycles.push(entities[ci]); }
-      }
-      entities = keptCycles;
+      withhold(byId('oled_short_cycles', 'oled_refresher_cycles', 'oled_failure_alerts'));
     }
 
-    /*
-     * Withhold panel silicon cell & TCON firmware if not available from panelcontroller.
-     */
-    if (!HARDWARE_INFO.cell) {
-      var keptSilicon = [];
-      for (var si = 0; si < entities.length; si++) {
-        if (entities[si].id === 'oled_cell_type' || entities[si].id === 'tcon_firmware') {
-          mqttClient.publish(discPfx + '/' + entities[si].type + '/' + devId + '/' + entities[si].id + '/config', '', true);
-        } else { keptSilicon.push(entities[si]); }
-      }
-      entities = keptSilicon;
-    }
+    // Panel silicon, where panelcontroller does not report the cell.
+    if (!HARDWARE_INFO.cell) withhold(byId('oled_cell_type', 'tcon_firmware'));
 
-    /*
-     * Withhold HDMI 2.1 diagnostics on platforms without /proc/lg/hdmi20.
-     */
+    // HDMI 2.1 diagnostics, on platforms with no /proc/lg/hdmi20 at all.
     if (!fs.existsSync('/proc/lg/hdmi20')) {
-      var keptHdmi = [];
-      for (var hi = 0; hi < entities.length; hi++) {
-        if (entities[hi].id.indexOf('hdmi_') === 0) {
-          mqttClient.publish(discPfx + '/' + entities[hi].type + '/' + devId + '/' + entities[hi].id + '/config', '', true);
-        } else { keptHdmi.push(entities[hi]); }
-      }
-      entities = keptHdmi;
+      withhold(function (e) { return e.id.indexOf('hdmi_') === 0; });
     }
+
+    // Play state, on a set whose media service never answers - webOS 9 has no
+    // com.webos.service.acb at all.
+    if (!hasMediaState) withhold(byId('play_state'));
+
+    if (!fs.existsSync('/proc/lg/pe/hdr_status')) withhold(byId('video_colorimetry'));
+
+    if (!HARDWARE_INFO.socArch) withhold(byId('soc_architecture'));
 
     /*
-     * Play state, on a set whose media service never answers - webOS 9 has no
-     * com.webos.service.acb at all.
+     * The ambient light entity on sets without the sensor. They still answer
+     * getLightSensorData, reporting 65535, so it would sit at "unknown"
+     * forever rather than simply not existing.
      */
-    if (!hasMediaState) {
-      var keptMedia = [];
-      for (var mi = 0; mi < entities.length; mi++) {
-        if (entities[mi].id === 'play_state') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/play_state/config', '', true);
-        } else { keptMedia.push(entities[mi]); }
-      }
-      entities = keptMedia;
-    }
+    if (hasLogoLight === false) withhold(byId('logo_light'));
 
-    /*
-     * Withhold colorimetry if /proc/lg/pe/hdr_status does not exist.
-     */
-    if (!fs.existsSync('/proc/lg/pe/hdr_status')) {
-      var keptColor = [];
-      for (var cli = 0; cli < entities.length; cli++) {
-        if (entities[cli].id === 'video_colorimetry') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/video_colorimetry/config', '', true);
-        } else { keptColor.push(entities[cli]); }
-      }
-      entities = keptColor;
-    }
+    // No thermal sensor at all (webOS 3.x).
+    if (!THERMAL_PRESENT) withhold(byId('soc_temperature'));
 
-    /*
-     * Withhold SoC architecture if unknown.
-     */
-    if (!HARDWARE_INFO.socArch) {
-      var keptArch = [];
-      for (var ai = 0; ai < entities.length; ai++) {
-        if (entities[ai].id === 'soc_architecture') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/soc_architecture/config', '', true);
-        } else { keptArch.push(entities[ai]); }
-      }
-      entities = keptArch;
-    }
+    // eMMC wear counters, absent on webOS 3.x.
+    if (!EMMC_WEAR_PRESENT) withhold(byId('flash_health', 'flash_wear'));
 
-    /*
-     * Withhold the ambient light entity on sets without the sensor. They still
-     * answer getLightSensorData, reporting 65535, so the entity would sit at
-     * "unknown" forever instead of simply not existing.
-     */
-    if (hasLogoLight === false) {
-      var keptLogo = [];
-      for (var g = 0; g < entities.length; g++) {
-        if (entities[g].id === 'logo_light') {
-          mqttClient.publish(discPfx + '/switch/' + devId + '/logo_light/config', '', true);
-        } else { keptLogo.push(entities[g]); }
-      }
-      entities = keptLogo;
-    }
-
-    /*
-     * Same reasoning on platforms with no thermal sensor at all (webOS 3.x):
-     * publishing the entity would leave a temperature in Home Assistant that
-     * is permanently unknown, which reads as a broken sensor rather than an
-     * absent one.
-     */
-    if (!THERMAL_PRESENT) {
-      var keptTemp = [];
-      for (var t = 0; t < entities.length; t++) {
-        if (entities[t].id === 'soc_temperature') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/soc_temperature/config', '', true);
-        } else { keptTemp.push(entities[t]); }
-      }
-      entities = keptTemp;
-    }
-
-    /*
-     * Same again for the eMMC wear counters, absent on webOS 3.x. An entity
-     * reading "unknown" for the life of the install is indistinguishable from
-     * a sensor that has broken.
-     */
-    if (!EMMC_WEAR_PRESENT) {
-      var keptFlash = [];
-      for (var f = 0; f < entities.length; f++) {
-        if (entities[f].id === 'flash_health' || entities[f].id === 'flash_wear') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/' + entities[f].id + '/config', '', true);
-        } else { keptFlash.push(entities[f]); }
-      }
-      entities = keptFlash;
-    }
-
-    if (!hasLightSensor) {
-      var keptAmb = [];
-      for (var a = 0; a < entities.length; a++) {
-        if (entities[a].id === 'ambient_light') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/ambient_light/config', '', true);
-        } else { keptAmb.push(entities[a]); }
-      }
-      entities = keptAmb;
-    }
+    if (!hasLightSensor) withhold(byId('ambient_light'));
 
     /*
      * HDMI diagnostics this set has never reported. A B8 has no FRL link, no
-     * chroma report, no PHY error counter and no VRR hardware, and an entity
-     * that can only ever read unknown - or worse, a confident 0 - is worse
-     * than none.
+     * chroma report, no PHY error counter and no VRR hardware, and each of
+     * these has one field behind it - see hdmiSeen.
      */
-    var keptHdmi = [];
-    for (var hi = 0; hi < entities.length; hi++) {
-      var hNeeds = HDMI_DIAG_ONLY[entities[hi].id];
-      if (hNeeds && !hdmiSeen[hNeeds]) {
-        mqttClient.publish(discPfx + '/' + entities[hi].type + '/' + devId + '/' +
-                           entities[hi].id + '/config', '', true);
-      } else { keptHdmi.push(entities[hi]); }
-    }
-    entities = keptHdmi;
+    withhold(function (e) {
+      var needs = HDMI_DIAG_ONLY[e.id];
+      return !!needs && !hdmiSeen[needs];
+    });
 
     /*
-     * GPU clock. Withheld on sets whose kernel does not expose the PLL output
-     * in /proc/lg/sys/status (such as webOS 9+ / C2).
+     * GPU clock, on sets whose kernel does not expose the PLL output in
+     * /proc/lg/sys/status (such as webOS 9+ / C2).
      */
-    if (gpuClockMhz() === null) {
-      var keptGpu = [];
-      for (var gi = 0; gi < entities.length; gi++) {
-        if (entities[gi].id === 'gpu_clock') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/gpu_clock/config', '', true);
-        } else { keptGpu.push(entities[gi]); }
-      }
-      entities = keptGpu;
-    }
+    if (gpuClockMhz() === null) withhold(byId('gpu_clock'));
 
     /*
      * Panel dimming. OLED sets control light per subpixel rather than via
-     * backlight zones — withhold on OLEDs. On LCD/QNED sets the entity stays
+     * backlight zones, so it is withheld on OLED. On LCD/QNED the entity stays
      * registered; the template returns null until the first telemetry tick.
      */
-    if (isOled === true) {
-      var keptDim = [];
-      for (var di = 0; di < entities.length; di++) {
-        if (entities[di].id === 'panel_dimming') {
-          mqttClient.publish(discPfx + '/sensor/' + devId + '/panel_dimming/config', '', true);
-        } else { keptDim.push(entities[di]); }
-      }
-      entities = keptDim;
-    }
+    if (isOled === true) withhold(byId('panel_dimming'));
 
+    // Panel-lifecycle entities, on anything that is not an OLED. Reporting
+    // 0 hours would read as a real measurement.
     if (isOled === false) {
-      var kept = [];
-      for (var d = 0; d < entities.length; d++) {
-        if (OLED_ONLY[entities[d].id]) {
-          var dead = discPfx + '/' + entities[d].type + '/' + devId + '/' + entities[d].id + '/config';
-          mqttClient.publish(dead, '', true);   // retained empty = remove
-        } else {
-          kept.push(entities[d]);
-        }
-      }
       console.log('mqtt: not an OLED panel, withheld ' +
-                  (entities.length - kept.length) + ' panel entities');
-      entities = kept;
+                  withhold(function (e) { return OLED_ONLY[e.id] === 1; }) +
+                  ' panel entities');
     }
 
     for (var i = 0; i < entities.length; i++) {
@@ -5334,6 +5247,7 @@ function setupHomeAssistant() {
 
   mqttClient.on('connect', function() {
     mqttStatus('connected', '');
+    flushMqttErrorRepeats();
     console.log('mqtt: connected to ' + CONFIG.mqtt.host + ':' + mqttClient.opts.port +
                 (useTls ? ' (tls)' : ' (plaintext)'));
     mqttClient.publish(statusTopic, 'online', true);
@@ -5425,8 +5339,31 @@ function setupHomeAssistant() {
     });
   });
 
+  /*
+   * A connection attempt fails every 5 seconds while the broker is
+   * unreachable, and each one arrives here with the same message. Logging all
+   * of them wrote ~17,000 identical lines a day to flash for as long as the
+   * outage lasted. Repeats are counted instead, and the total is reported once
+   * the message changes or the client connects - the fact worth having is how
+   * long it went on, not each attempt.
+   */
+  var lastMqttError = null;
+  var mqttErrorRepeats = 0;
+
+  function flushMqttErrorRepeats() {
+    if (mqttErrorRepeats) {
+      console.error('mqtt error: last message repeated ' + mqttErrorRepeats + ' more time' +
+                    (mqttErrorRepeats === 1 ? '' : 's'));
+      mqttErrorRepeats = 0;
+    }
+    lastMqttError = null;
+  }
+
   mqttClient.on('error', function(err) {
     mqttStatus('error', err.message);
+    if (err.message === lastMqttError) { mqttErrorRepeats++; return; }
+    flushMqttErrorRepeats();
+    lastMqttError = err.message;
     console.error('mqtt error:', err.message);
   });
 

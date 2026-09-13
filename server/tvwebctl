@@ -14,8 +14,8 @@ LOG=/var/lib/tvweb/tvweb.log
 PIDFILE=/var/run/tvweb.pid
 WATCHPID=/var/run/tvwebwatch.pid
 BEAT=/var/run/tvweb.beat
-# Restarts are recorded here rather than in $LOG, which start_app truncates -
-# a watchdog whose evidence is erased by its own restart is no use.
+# Restarts are recorded here rather than in $LOG, which is rotated - a
+# watchdog whose evidence is discarded with the next 256k of log is no use.
 RESTARTS=/var/lib/tvweb/tvweb.restarts
 NODE=/usr/bin/node
 SELF=$(readlink -f "$0" 2>/dev/null || echo /var/lib/tvweb/tvwebctl)
@@ -26,9 +26,15 @@ SELF=$(readlink -f "$0" 2>/dev/null || echo /var/lib/tvweb/tvwebctl)
 STALE=90
 CHECK=30
 
+# Log rotation. /var/lib is flash, and nothing else trims this file: a broker
+# the TV cannot reach, or a chatty automation, appends to it indefinitely.
+# Rotating at 256k keeps at most 512k on disk across the two generations.
+LOG_MAX=262144
+
 stop_app() {
   start-stop-daemon -K -q -p "$PIDFILE" 2>/dev/null
   # Catch instances started before this script existed.
+  # shellcheck disable=SC2009  # busybox pgrep has no -f, so ps is the only way
   for p in $(ps -eo pid,args 2>/dev/null | grep "$APP" | grep -v grep | awk '{print $1}'); do
     [ "$p" = "$$" ] && continue
     kill -9 "$p" 2>/dev/null
@@ -42,7 +48,37 @@ start_app() {
   chmod 600 /var/lib/tvweb/config.json 2>/dev/null
   # -b detaches and -m writes the pidfile, so the process survives the ssh
   # session closing. `setsid ... &` alone does not.
-  start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c "exec $NODE $APP >$LOG 2>&1"
+  # Append rather than truncate. trim_logs() below truncates this file while
+  # the server holds it open, and a descriptor opened without O_APPEND keeps
+  # its own offset: the server would carry on writing past the old end, leaving
+  # a sparse file that still reports the size rotation just reclaimed.
+  start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c "exec $NODE $APP >>$LOG 2>&1"
+}
+
+# Keep one previous generation and truncate in place. Renaming the live file
+# would not work: the server writes to the descriptor it already holds, so it
+# would follow the file under its new name and the fresh one would stay empty.
+#
+# $RESTARTS is written by this loop rather than by the server, so nothing holds
+# it open and the tail can simply be kept. A crash loop is what fills it.
+trim_logs() {
+  if [ -f "$LOG" ]; then
+    sz=$(wc -c < "$LOG" 2>/dev/null)
+    case "$sz" in
+      ''|*[!0-9]*) ;;
+      *) [ "$sz" -gt "$LOG_MAX" ] && cp "$LOG" "$LOG.1" 2>/dev/null && : > "$LOG" ;;
+    esac
+  fi
+  if [ -f "$RESTARTS" ]; then
+    rsz=$(wc -c < "$RESTARTS" 2>/dev/null)
+    case "$rsz" in
+      ''|*[!0-9]*) ;;
+      *) if [ "$rsz" -gt "$LOG_MAX" ]; then
+           tail -n 200 "$RESTARTS" > "$RESTARTS.tmp" 2>/dev/null &&
+             mv "$RESTARTS.tmp" "$RESTARTS"
+         fi ;;
+    esac
+  fi
 }
 
 stop_watch() {
@@ -65,6 +101,11 @@ watch_loop() {
   last=$(date +%s)
   while true; do
     sleep "$CHECK"
+
+    # The watchdog is the only thing running on a schedule, so it keeps the
+    # log trimmed too. Done before the liveness checks: a full filesystem is
+    # one of the things that wedges the server.
+    trim_logs
 
     #
     # Standby suspends this loop along with everything else, so on resume the

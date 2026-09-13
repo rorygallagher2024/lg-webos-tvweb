@@ -1,10 +1,12 @@
 #!/bin/bash
 # Poll LG webOS TV for SoC temp / CPU load.
 # Outputs JSON. Works over rooted telnet on port 23.
-# Usage: ./tvstats.sh [tv-ip]
+# Usage: ./tvstats.sh <tv-ip>
 
-TV="${1:-192.168.1.134}"
+TV="$1"
+[ -n "$TV" ] || { echo "usage: $0 <tv-ip>" >&2; exit 2; }
 
+# shellcheck disable=SC2016  # the $(...) below run on the TV, not here
 raw=$( { printf '\n'; sleep 1
          printf 'echo S:$(cat /proc/lg/pm/temperature):$(cat /proc/lg/pm/current_load):$(cat /proc/lg/pm/frequency):E\n'
          sleep 2; } | nc -w 5 "$TV" 23 2>/dev/null | tr -d '\r' )

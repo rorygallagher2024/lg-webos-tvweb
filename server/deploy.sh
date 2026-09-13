@@ -9,7 +9,7 @@
 # have not enabled SSH. That path serves the files over HTTP from this machine
 # for a few seconds, because telnet gives us no file transfer.
 #
-# Usage: ./deploy.sh [tv-ip] [--persist] [--telnet]
+# Usage: ./deploy.sh <tv-ip> [--persist] [--telnet]
 #   --persist  also install the boot hook so it survives a reboot
 #   --telnet   force the telnet path even if SSH is available
 
@@ -26,7 +26,10 @@ for a in "$@"; do
     *)         TV="$a" ;;
   esac
 done
-TV="${TV:-192.168.1.134}"
+if [ -z "$TV" ]; then
+  echo "usage: $0 <tv-ip> [--persist] [--telnet]" >&2
+  exit 2
+fi
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT=8771

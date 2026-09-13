@@ -29,3 +29,10 @@ jobs:
 
       - name: screen saver QML matches its declared QtQuick version
         run: ./scripts/check-screensavers.py
+
+      - name: documented entity count and deploy list match the code
+        run: ./scripts/check-drift.py
+
+      # Preinstalled on ubuntu-latest.
+      - name: shell scripts
+        run: shellcheck server/deploy.sh server/tvwebctl server/50-tvweb.sh tvstats.sh

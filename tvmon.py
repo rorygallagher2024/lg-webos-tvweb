@@ -6,7 +6,7 @@ Verified against OLED65B8SLC, webOS 4.4.3, kernel 4.4.84 (glacier / m16pc0).
 Reads LG's private /proc/lg/pm/* nodes plus Luna services over the Homebrew
 Channel root telnet. Stdlib only.
 
-    ./tvmon.py [ip] [--interval 1.5] [--slow-every 8]
+    ./tvmon.py <ip> [--interval 1.5] [--slow-every 8]
 
 Platform notes worth knowing:
   * /sys/class/thermal is EMPTY on this hardware. Temperature comes from
@@ -143,7 +143,7 @@ EOL = {"01": ("Normal", GRN), "02": ("WARNING - 80% reserve used", YEL),
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("host", nargs="?", default="192.168.1.134")
+    ap.add_argument("host")
     ap.add_argument("--interval", type=float, default=1.5)
     ap.add_argument("--slow-every", type=int, default=8,
                     help="run Luna/eMMC queries every Nth poll (they are slower)")

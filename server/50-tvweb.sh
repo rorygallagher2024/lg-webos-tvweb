@@ -12,7 +12,7 @@
 [ -x /usr/bin/node ] || exit 0
 [ -f /var/lib/tvweb/tvweb.js ] || exit 0
 
-export PATH=/bin:/sbin:/usr/bin:/usr/sbin:$PATH
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
 
 # Hold down the LG daemons switched off in the dashboard. Done in the delayed
 # block below, after upstart has had its go at starting them.

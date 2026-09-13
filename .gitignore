@@ -3,3 +3,4 @@ server/config*.json
 *.log
 .tvweb_httpd
 lg-webos-mqtt/
+__pycache__/

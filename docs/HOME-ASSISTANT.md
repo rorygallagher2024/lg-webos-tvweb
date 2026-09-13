@@ -6,7 +6,7 @@ Entity reference and example automations.
 
 ## Entities
 
-Once connected to your MQTT broker, Home Assistant automatically discovers **up to 69 native entities** under a single unified device:
+Once connected to your MQTT broker, Home Assistant automatically discovers **up to 70 native entities** under a single unified device:
 
 ### Controls & Switches
 | Domain | Entity ID | Name | Description |

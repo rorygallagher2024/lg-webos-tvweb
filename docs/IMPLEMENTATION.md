@@ -313,17 +313,38 @@ no error anywhere.
 
 ---
 
+## Rotating a log the server is holding open
+
+`/var/lib` is flash and nothing trimmed `tvweb.log`, so a broker the TV could
+not reach appended a line every five seconds - the retry interval - for as long
+as the outage lasted. Two changes: repeated MQTT connection errors are counted
+and reported once rather than logged individually, and the watchdog in
+`tvwebctl` trims the file at 256k.
+
+The trim keeps one previous generation and truncates in place rather than
+renaming. Renaming does not work here: the server writes to a descriptor it
+already holds, so it follows the file under its new name and the fresh one
+stays empty. Truncating in place only works if that descriptor was opened
+`O_APPEND`, which is why `start_app` redirects with `>>` and not `>`. Without
+it the server keeps its own offset and carries on writing past the old end,
+leaving a sparse file that still reports the size the trim just reclaimed -
+measured at 19MB apparent against 3MB allocated, which would send the watchdog
+into rotating it on every pass.
+
+---
+
 ## The checks
 
-`scripts/` holds four static checks. Three need nothing but the repository and
-run in CI; `check-entities.py` needs a live `/api/stats`, so it is run by hand
-against the set.
+`scripts/` holds five static checks. Four need nothing but the repository and
+run in CI alongside `shellcheck`; `check-entities.py` needs a live
+`/api/stats`, so it is run by hand against the set.
 
 | Check | What it catches |
 | :--- | :--- |
 | `check-es5.py` | An ES6 construct in `tvweb.js`. Node 0.12 treats one as a parse error, so the server never starts and logs nothing. |
 | `check-ui-ids.py` | An id the dashboard reaches for that no element defines. |
 | `check-screensavers.py` | QML newer than the `import QtQuick` line it declares. |
+| `check-drift.py` | A documented entity count the code has moved past, and an asset `deploy.sh` would never install. |
 | `check-entities.py` | An entity template naming a field the telemetry no longer has. |
 
 `check-es5.py` blanks strings, comments and regex literals before scanning, and

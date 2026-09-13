@@ -1082,6 +1082,14 @@ const q = id => document.getElementById(id);
 const api = p => p + (K ? (p.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(K) : '');
 const mb = k => (k / 1024).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 const esc = t => String(t).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+/*
+ * For a value landing in a single-quoted JS string inside an attribute -
+ * onclick="c('launchApp','<id>')". Both escapes are needed, in this order: the
+ * browser HTML-decodes the attribute before the JS in it is parsed, so &#39;
+ * would arrive back as a quote that ends the string early. A backslash escape
+ * survives that decode; esc() then keeps the value inside the attribute.
+ */
+const jsq = t => esc(String(t).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
 const hrs = h => h == null ? '—' : (h >= 100 ? Math.round(h).toLocaleString() : h.toFixed(1));
 /* Binary steps labelled kB/MB/GB, matching mb() above and the rest of the
    dashboard. Three significant figures at most: a lifetime byte counter is
@@ -1185,7 +1193,7 @@ function renderApps(currentAppId) {
     const clean = cleanAppTitle(a.title, a.id);
     const btnId = 'app_' + a.id.replace(/[^a-zA-Z0-9_-]/g, '_');
     const isCur = currentAppId && (a.id === currentAppId || a.id === ('com.webos.app.' + currentAppId));
-    return `<button id="${btnId}" class="${isCur ? 'on' : ''}" title="${esc(a.title)}" onclick="c('launchApp','${esc(a.id)}')">${esc(clean)}</button>`;
+    return `<button id="${btnId}" class="${isCur ? 'on' : ''}" title="${esc(a.title)}" onclick="c('launchApp','${jsq(a.id)}')">${esc(clean)}</button>`;
   }).join('');
 }
 
@@ -1461,7 +1469,7 @@ async function tick() {
 
     if (d.inputs && !q('inputs').dataset.built) {
       q('inputs').innerHTML = Object.keys(d.inputs).map(k =>
-        `<button id="in_${k}" onclick="c('input','${k}')">${esc(d.inputs[k])}</button>`).join('') +
+        `<button id="in_${esc(k)}" onclick="c('input','${jsq(k)}')">${esc(d.inputs[k])}</button>`).join('') +
         `<button id="in_livetv" onclick="c('input','livetv')">Live TV</button>`;
       q('inputs').dataset.built = '1';
     }
@@ -1531,7 +1539,7 @@ async function tick() {
       if (box && box.dataset.sig !== sig) {
         box.dataset.sig = sig;
         box.innerHTML = modes.map(m =>
-          `<button id="pm_${m.value}" onclick="c('pictureMode','${m.value}')">${esc(m.label)}</button>`
+          `<button id="pm_${esc(m.value)}" onclick="c('pictureMode','${jsq(m.value)}')">${esc(m.label)}</button>`
         ).join('');
       }
       if (box) {
