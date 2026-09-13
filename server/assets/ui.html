@@ -518,6 +518,8 @@ footer{margin-top:38px;font-size:12px;letter-spacing:.10em;text-transform:upperc
 #version{text-transform:none;color:inherit;text-decoration:none}
 #version::before{content:'|';margin:0 .55em;opacity:.45}
 #version:hover{color:var(--w80);text-decoration:underline}
+#version-new{text-transform:none;color:var(--cand);text-decoration:none;margin-left:.5em}
+#version-new:hover{text-decoration:underline}
 .stale{opacity:.35;transition:opacity .3s}
 
 /* ---- hardware specifications strip ---- */
@@ -635,6 +637,25 @@ footer{margin-top:38px;font-size:12px;letter-spacing:.10em;text-transform:upperc
         <div id="flashwear-cell"><div class="lbl">Flash wear</div><div class="v num" id="flashval">&mdash;</div><div class="sub">eMMC lifetime estimated</div></div>
         <div id="flashhealth-cell"><div class="lbl">Pre-EOL status</div><div class="v" id="flasheol">&mdash;</div><div class="sub">Drive's own assessment</div></div>
       </div>
+    </div>
+
+    <div class="grp-sec" id="updblock" data-col="1">
+      <div class="grp">Server</div>
+      <div class="prot-table">
+        <div class="prot-row">
+          <div class="prot-main">
+            <div class="prot-title" id="upd-title">tvweb</div>
+            <div class="prot-desc" id="upd-desc">&mdash;</div>
+          </div>
+          <div class="prot-status"><span class="pill idle" id="upd-pill">&mdash;</span></div>
+        </div>
+      </div>
+      <div class="btns" style="margin-top:14px">
+        <button type="button" id="upd-check" onclick="checkUpdate()">Check now</button>
+        <button type="button" id="upd-install" hidden onclick="installUpdate()">Install</button>
+        <button type="button" id="upd-rollback" hidden onclick="rollbackUpdate()">Roll back</button>
+      </div>
+      <div class="sub" id="upd-msg" style="margin-top:10px"></div>
     </div>
 
     <div class="grp-sec" id="remoteblock" data-col="2" hidden>
@@ -1045,7 +1066,7 @@ footer{margin-top:38px;font-size:12px;letter-spacing:.10em;text-transform:upperc
 
 <footer>
   <span id="uptime">&mdash;</span>
-  <span><span id="clock">&mdash;</span><a id="version" hidden target="_blank" rel="noopener noreferrer"></a></span>
+  <span><span id="clock">&mdash;</span><a id="version" hidden target="_blank" rel="noopener noreferrer"></a><a id="version-new" hidden target="_blank" rel="noopener noreferrer"></a></span>
 </footer>
 
 <script>
@@ -1569,10 +1590,102 @@ const REPO = 'https://github.com/rorygallagher2024/lg-webos-mqtt';
 function setVersion(v) {
   const el = q('version');
   if (!v || el.dataset.v === v) return;   // static between restarts, so set it once
+  const had = el.dataset.v;
   el.dataset.v = v;
   el.textContent = 'v' + v;
   el.href = REPO + '/releases/tag/v' + v;
   el.hidden = false;
+  // It came back on a different version, so an upgrade landed: the "newer
+  // version" hint beside this is now about the one that is running.
+  if (had) loadUpdate();
+}
+
+// ---- release check and in-place upgrade ----
+let updBusy = false;
+
+function renderUpdate(d) {
+  const pill = q('upd-pill'), desc = q('upd-desc'), msg = q('upd-msg');
+  const inst = q('upd-install'), roll = q('upd-rollback'), chk = q('upd-check');
+  q('upd-title').textContent = 'tvweb v' + d.installed;
+
+  const working = d.state === 'checking' || d.state === 'downloading' || d.state === 'installing';
+  pill.className = 'pill ' + (d.state === 'error' ? 'bad'
+    : d.available ? 'warn' : d.state === 'current' ? 'good' : 'idle');
+  pill.textContent = d.state === 'error' ? 'failed'
+    : working ? d.state
+    : d.available ? 'v' + d.latest
+    : d.state === 'current' ? 'up to date'
+    : d.state === 'installed' ? 'restarting'
+    : 'not checked';
+
+  desc.textContent = d.available
+    ? 'v' + d.latest + ' is out. Installing it replaces the server and restarts it; the config, ad blocker and screen saver are kept.'
+    : d.autoCheck
+      ? 'Checked against the latest GitHub release once a day.'
+      : 'Nothing is checked automatically. Set "update": { "check": true } in config.json for a daily check and the Home Assistant update entity.';
+
+  msg.textContent = d.state === 'error' ? (d.error || 'the check failed')
+    : d.state === 'installed' ? 'Installed. The server is restarting - this page reconnects on its own.'
+    : '';
+
+  chk.disabled = working || updBusy;
+  inst.hidden = !(d.available && d.writable);
+  inst.disabled = working || updBusy;
+  inst.textContent = 'Install v' + d.latest;
+  roll.hidden = !(d.rollbackTo && d.writable);
+  roll.disabled = working || updBusy;
+  roll.textContent = 'Roll back to v' + d.rollbackTo;
+
+  const vn = q('version-new');
+  if (d.available) {
+    vn.textContent = '\u2192 v' + d.latest;
+    vn.href = REPO + '/releases/tag/v' + d.latest;
+    vn.hidden = false;
+  } else {
+    vn.hidden = true;
+  }
+}
+
+async function loadUpdate() {
+  try {
+    const d = await (await fetch(api('/api/update'), { cache: 'no-store' })).json();
+    if (d && d.ok) renderUpdate(d);
+  } catch (e) { /* the footer hint is not worth an error banner */ }
+}
+
+async function checkUpdate() {
+  updBusy = true;
+  q('upd-pill').className = 'pill idle';
+  q('upd-pill').textContent = 'checking';
+  q('upd-check').disabled = true;
+  await c('updateCheck');
+  updBusy = false;
+  loadUpdate();
+}
+
+async function installUpdate() {
+  const v = q('upd-install').textContent.replace('Install ', '');
+  if (!confirm('Install ' + v + '?\n\nThe server is replaced and restarted. Settings, the ad blocker and the screen saver are kept, and the previous version stays on the TV so it can be rolled back.')) return;
+  updBusy = true;
+  q('upd-msg').textContent = 'Downloading and installing - this takes a minute.';
+  const r = await c('update');
+  updBusy = false;
+  if (r && r.ok && r.updated) {
+    // Said here rather than read back: the server is already going away, so the
+    // next poll would only fail.
+    q('upd-msg').textContent = 'v' + r.latest + ' installed. The server is restarting - this page reconnects on its own.';
+    return;
+  }
+  if (r && r.ok && !r.updated) q('upd-msg').textContent = r.note || 'nothing newer to install';
+  loadUpdate();
+}
+
+async function rollbackUpdate() {
+  if (!confirm('Put the previous version back?')) return;
+  updBusy = true;
+  await c('updateRollback');
+  updBusy = false;
+  loadUpdate();
 }
 
 function showErr(m) { const e = q('err'); e.textContent = m; e.style.display = 'block'; }
@@ -2062,7 +2175,7 @@ function showTab(name) {
   try { localStorage.setItem('tab', name); } catch (e) { /* private window */ }
   relayout(false);   // the panel just became measurable
   cfgPollStatus(name === 'mqtt');
-  if (name === 'system') loadHdmiOnce();
+  if (name === 'system') { loadHdmiOnce(); loadUpdate(); }
   if (name === 'oledcare') loadOledCare();
   if (name === 'servicemenu') loadServiceMenu();
   if (name === 'screensaver') loadScreensavers();
@@ -2681,6 +2794,7 @@ document.addEventListener('visibilitychange', () => {
 
 tick();
 startPolling();
+loadUpdate();   // reads what the server already knows; it does not reach GitHub
 </script>
 </body>
 </html>

@@ -24,5 +24,10 @@
     "name": "LG webOS TV",
     "model": "",
     "manufacturer": "LG"
+  },
+  "update": {
+    "check": false,
+    "intervalHours": 24,
+    "client": ""
   }
 }
